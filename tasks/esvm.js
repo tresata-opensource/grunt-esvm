@@ -10,9 +10,13 @@ var libesvm = require('libesvm');
 var _ = require('lodash');
 var logClusterLogs = require('../lib/logClusterLogs');
 var Table = require('cli-table');
+var child_process = require('child_process');
+var spawn = child_process.spawn;
+var execSync = child_process.execSync;
 var Promise = require('bluebird');
 var get = Promise.promisify(require('wreck').get, require('wreck'));
 var moment = require('moment');
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // allow server to connect to service with unverified SSL (self-signed SSL).
 
 module.exports = function (grunt) {
 
@@ -94,22 +98,61 @@ module.exports = function (grunt) {
     })
     .map(function (node) {
       if (node.version) return node;
+      if(node.config.searchguard) {
+        return new Promise(function (resolve, reject) {
+          execSync(`chmod +x ${node.path}/plugins/search-guard-5/tools/sgadmin.sh`);
+          var protocol = (node.config.searchguard.ssl.http.enabled === true || 'true') ? 'https' : 'http';
+          var credentials = 'admin:admin';
+         
+          var runSh = spawn('sh', ['sgadmin.sh'], {
+            cwd: node.path
+          });
 
-      return get('http://localhost:' + node.port, { json: 'force' })
-      .spread(function (resp, payload) {
-        if (resp.statusCode > 200) return node;
+          runSh.stdout.on('data', (data) => {
+            console.log(data.toString());
+          });
 
-        grunt.log.debug(payload);
-        var sha = _.get(payload, 'version.build_hash', '').slice(0, 7);
-        if (String(sha).match(/\$\{.+\}/)) {
-          node.branchInfo = '- no build info -';
-        }
+          runSh.stderr.on('data', (data) => {
+            console.error(data.toString());
+            reject(data.toString());
+          });
 
-        var ts = _.get(payload, 'version.build_timestamp', _.get(payload, 'version.build_date', 0));
-        var when = ts === 'NA' ? '(build time unkown)' : ' (built ' + moment(ts).fromNow() + ')';
-        node.branchInfo = node.branch + '@' + sha + when;
-        return node;
-      });
+          runSh.on('exit', (code) => {
+            console.log(`sgadmin process execution exited with code ${code}`);
+            return get(`${protocol}://${credentials}@localhost:` + node.port, { json: 'force' })
+            .spread(function (resp, payload) {
+              if (resp.statusCode > 200) return node;
+
+              grunt.log.debug(payload);
+              var sha = _.get(payload, 'version.build_hash', '').slice(0, 7);
+              if (String(sha).match(/\$\{.+\}/)) {
+                node.branchInfo = '- no build info -';
+              }
+
+              var ts = _.get(payload, 'version.build_timestamp', _.get(payload, 'version.build_date', 0));
+              var when = ts === 'NA' ? '(build time unkown)' : ' (built ' + moment(ts).fromNow() + ')';
+              node.branchInfo = node.branch + '@' + sha + when;
+              resolve(node);
+            });
+          });  
+        });
+      } else {
+        return get('http://localhost:' + node.port, { json: 'force' })
+        .spread(function (resp, payload) {
+          if (resp.statusCode > 200) return node;
+
+          grunt.log.debug(payload);
+          var sha = _.get(payload, 'version.build_hash', '').slice(0, 7);
+          if (String(sha).match(/\$\{.+\}/)) {
+            node.branchInfo = '- no build info -';
+          }
+
+          var ts = _.get(payload, 'version.build_timestamp', _.get(payload, 'version.build_date', 0));
+          var when = ts === 'NA' ? '(build time unkown)' : ' (built ' + moment(ts).fromNow() + ')';
+          node.branchInfo = node.branch + '@' + sha + when;
+          return node;
+        });
+      }
     })
     .then(function (nodes) {
       grunt.log.ok('Started ' + nodes.length + ' Elasticsearch nodes.');
