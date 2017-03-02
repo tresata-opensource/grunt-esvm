@@ -119,21 +119,7 @@ module.exports = function (grunt) {
 
           runSh.on('exit', (code) => {
             console.log(`sgadmin process execution exited with code ${code}`);
-            return get(`${protocol}://${credentials}@localhost:` + node.port, { json: 'force' })
-            .spread(function (resp, payload) {
-              if (resp.statusCode > 200) return node;
-
-              grunt.log.debug(payload);
-              var sha = _.get(payload, 'version.build_hash', '').slice(0, 7);
-              if (String(sha).match(/\$\{.+\}/)) {
-                node.branchInfo = '- no build info -';
-              }
-
-              var ts = _.get(payload, 'version.build_timestamp', _.get(payload, 'version.build_date', 0));
-              var when = ts === 'NA' ? '(build time unkown)' : ' (built ' + moment(ts).fromNow() + ')';
-              node.branchInfo = node.branch + '@' + sha + when;
-              resolve(node);
-            });
+            resolve(node);
           });  
         });
       } else {
